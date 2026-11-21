@@ -26,11 +26,17 @@ class ExtendBody(BaseModel):
 
 
 @router.get("/leases")
-def list_leases():
+def list_leases(day: str | None = None):
+    """租约列表；可按日筛选（?day=YYYY-MM-DD），用于与日切回执逐日互证。"""
     with transaction() as conn:
         clock = clock_svc.read_clock(conn)
         lease_svc.reconcile_open_watermark(conn)
-        rows = conn.execute("SELECT * FROM leases ORDER BY id DESC").fetchall()
+        if day:
+            rows = conn.execute(
+                "SELECT * FROM leases WHERE day=? ORDER BY id DESC", (day,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM leases ORDER BY id DESC").fetchall()
         out = []
         for r in rows:
             item = dict(r)
@@ -119,8 +125,16 @@ class DayCloseBody(BaseModel):
 
 @router.post("/day-close")
 def day_close(body: DayCloseBody):
+    """日切入口：同事务强制收口跨日占用，回执可由租约表重放（幂等）。"""
     try:
         with transaction() as conn:
             return day_close_view.run_day_close(conn, body.day)
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
+
+
+@router.get("/day-close/{day}")
+def day_close_status(day: str):
+    """日切回执 + 当场重放校验：释放数必须能由租约表重放为 0 残留。"""
+    with transaction() as conn:
+        return day_close_view.verify_day_close(conn, day)

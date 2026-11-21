@@ -27,9 +27,12 @@ export const api = {
   slots: () => req("/slots"),
   executors: () => req("/executors"),
   windows: () => req("/windows"),
-  leases: () => req("/leases"),
+  leases: (day) => req(day ? `/leases?day=${day}` : "/leases"),
   conflicts: () => req("/conflicts"),
   audit: (limit = 100) => req(`/audit?limit=${limit}`),
+  dayClose: (day) =>
+    req("/day-close", { method: "POST", body: JSON.stringify({ day }) }),
+  dayCloseStatus: (day) => req(`/day-close/${day}`),
   openLease: (window_code) =>
     req("/leases/open", { method: "POST", body: JSON.stringify({ window_code }) }),
   closeLease: (lease_no) =>

@@ -50,5 +50,7 @@ def dashboard():
             "done_sessions": done_n,
             "swept": swept,
         }
-        return day_close_view.overlay_dashboard(conn, base)
+        # 日切状态当场由租约表重放校验，绝不用回执缓存覆盖真实水位。
+        base["day_close"] = day_close_view.latest_day_close(conn)
+        return base
 

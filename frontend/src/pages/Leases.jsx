@@ -9,19 +9,35 @@ function fmtMin(m) {
 
 export default function Leases() {
   const [rows, setRows] = useState([]);
+  const [days, setDays] = useState([]);
   const [policy, setPolicy] = useState(null);
+  const [day, setDay] = useState("");
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
-  async function load() {
-    const [ls, pol] = await Promise.all([api.leases(), api.policy()]);
+  async function load(dayFilter = day) {
+    const [ls, all, pol] = await Promise.all([
+      api.leases(dayFilter || undefined),
+      api.leases(),
+      api.policy(),
+    ]);
     setRows(ls);
+    setDays([...new Set(all.map((r) => r.day))].sort());
     setPolicy(pol);
   }
 
   useEffect(() => {
     load().catch((e) => setErr(e.message));
   }, []);
+
+  async function filterDay(d) {
+    setDay(d);
+    try {
+      await load(d);
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
 
   async function closeOne(lease_no) {
     setMsg("");
@@ -55,6 +71,24 @@ export default function Leases() {
           {policy?.extend_supported ? "延租续窗" : "到点扫描关窗"}
         </span>
       </h2>
+      <div className="row-actions" style={{ marginBottom: 8 }}>
+        <label>
+          按日筛选（与日切回执互证）：
+          <select value={day} onChange={(e) => filterDay(e.target.value)}>
+            <option value="">全部</option>
+            {days.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </label>
+        {day && (
+          <span className="hint">
+            若 {day} 已日切，本日租约应全部「已释放」；仍有「占用中」即口径撕裂。
+          </span>
+        )}
+      </div>
       {msg && <div className="msg">{msg}</div>}
       {err && <div className="msg err">{err}</div>}
       <table>

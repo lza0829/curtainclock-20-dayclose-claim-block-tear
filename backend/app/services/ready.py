@@ -1,5 +1,5 @@
 from __future__ import annotations
-from app.services.settings_util import get_setting
+from app.services.settings_util import get_setting, is_day_closed
 
 import sqlite3
 
@@ -71,6 +71,10 @@ def readiness(
         session["day"], session["end_min"], clock["day"], clock["now_min"]
     ):
         reasons.append(f"已过结束时刻 {clock_svc.fmt_min(session['end_min'])}")
+    # 批窗日界：所在日已日切的批窗不可再开（与日切回执、租约表同源互证）。
+    day_closed = is_day_closed(conn, session["day"])
+    if day_closed:
+        reasons.append(f"所在日 {session['day']} 已日切收口，不能开窗")
 
     busy_room = resource_busy(
         conn,
@@ -102,4 +106,5 @@ def readiness(
         "past_end": clock_svc.is_past_end(
             session["day"], session["end_min"], clock["day"], clock["now_min"]
         ),
+        "day_closed": day_closed,
     }

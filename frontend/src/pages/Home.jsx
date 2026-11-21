@@ -66,6 +66,22 @@ export default function Home() {
     }
   }
 
+  async function doDayClose() {
+    setMsg("");
+    setErr("");
+    try {
+      const r = await api.dayClose(clock.day);
+      setMsg(
+        `日切 ${r.day} 完成：本次释放 ${r.released_now} 笔，累计 ${r.released_count} 笔` +
+          `（第 ${r.runs} 次执行，幂等）；在途水位 ${r.open_leases}；` +
+          (r.verify?.ok ? "租约重放一致，无跨日残留" : `重放异常：${JSON.stringify(r.verify)}`)
+      );
+      await load();
+    } catch (e2) {
+      setErr(e2.message);
+    }
+  }
+
   if (err && !d) return <div className="msg err">{err}</div>;
   if (!d) return <div className="panel">加载中…</div>;
 
@@ -101,6 +117,22 @@ export default function Home() {
           <b className={d.overdue_live ? "warn" : ""}>{d.overdue_live}</b>
           。到点由扫描或人工关窗收口，不会静默续窗。
         </p>
+        {d.day_close && (
+          <p className="hint">
+            最近日切 {d.day_close.day}：累计释放 <b>{d.day_close.released_count}</b> 笔，
+            执行 {d.day_close.runs} 次（幂等）；
+            {d.day_close.ok ? (
+              <span className="tag live">租约重放一致，无跨日残留</span>
+            ) : (
+              <span className="tag bad">
+                重放不符：跨日残留 {d.day_close.residual_open} 笔
+                {d.day_close.not_closed?.length
+                  ? `，回执所列未闭 ${d.day_close.not_closed.join("、")}`
+                  : ""}
+              </span>
+            )}
+          </p>
+        )}
       </section>
 
       <section className="panel">
@@ -123,10 +155,14 @@ export default function Home() {
           <button type="button" className="secondary" onClick={doSweep}>
             立即扫描
           </button>
+          <button type="button" className="secondary" onClick={doDayClose}>
+            日切 {clock?.day}
+          </button>
         </form>
         <p className="hint">
           当前观察钟 {clock?.day} {clock?.label}；拨过某窗 end_min 后，该窗租约由扫描收口，
-          同槽下窗随即可开。
+          同槽下窗随即可开。日切会把当日（含）之前全部跨日占用强制收口，
+          回执释放数可由租约表重放；已切日的批窗不得再开窗。
         </p>
         {msg && <div className="msg">{msg}</div>}
         {err && <div className="msg err">{err}</div>}

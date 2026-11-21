@@ -5,6 +5,7 @@ import sqlite3
 from app.config import POLICY
 from app.services import clock as clock_svc
 from app.services.ready import readiness, resource_busy
+from app.services.settings_util import is_day_closed
 
 
 def _bump(conn: sqlite3.Connection, key: str, delta: int) -> int:
@@ -45,6 +46,44 @@ def actual_open_leases(conn: sqlite3.Connection) -> int:
     )
 
 
+def close_lease_row(
+    conn: sqlite3.Connection,
+    lease: sqlite3.Row,
+    *,
+    actor: str,
+    action: str,
+    detail: str,
+) -> bool:
+    """单次收口的唯一实现：关租约 → 关批窗 → 水位 -1 → 审计。
+
+    UPDATE 带 status='open' 守卫并以 rowcount 判定是否真的发生了
+    open→closed 跃迁，只有跃迁成功才减水位——扫描、人工关窗、日切
+    都走这里，任何交错/并发重入都不会把同一笔租约双减水位。
+    返回 True 表示本笔由本次调用收口。
+    """
+    cur = conn.execute(
+        "UPDATE leases SET status='closed', closed_at=? "
+        "WHERE lease_no=? AND status='open'",
+        (clock_svc.now_iso(), lease["lease_no"]),
+    )
+    if cur.rowcount != 1:
+        return False
+    conn.execute(
+        "UPDATE windows SET status='done' WHERE code=?",
+        (lease["window_code"],),
+    )
+    _bump(conn, "open_leases", -1)
+    clock_svc.audit(
+        conn,
+        action,
+        actor=actor,
+        window_code=lease["window_code"],
+        lease_no=lease["lease_no"],
+        detail=detail,
+    )
+    return True
+
+
 def reconcile_open_watermark(conn: sqlite3.Connection) -> dict:
     """水位以租约表实际占用数为准；漂移时纠正并留审计。"""
     actual = actual_open_leases(conn)
@@ -83,27 +122,14 @@ def sweep_expired(
 
     closed: list[dict] = []
     for lease in rows:
-        conn.execute(
-            "UPDATE leases SET status='closed', closed_at=? WHERE lease_no=? AND status='open'",
-            (clock_svc.now_iso(), lease["lease_no"]),
-        )
-        conn.execute(
-            "UPDATE windows SET status='done' WHERE code=?",
-            (lease["window_code"],),
-        )
-        _bump(conn, "open_leases", -1)
         detail = (
             f"到点扫描：end_min={clock_svc.fmt_min(lease['end_min'])} "
             f"≤ 观察钟 {clock['label']}"
         )
-        clock_svc.audit(
-            conn,
-            "sweep_close",
-            actor=actor,
-            window_code=lease["window_code"],
-            lease_no=lease["lease_no"],
-            detail=detail,
-        )
+        if not close_lease_row(
+            conn, lease, actor=actor, action="sweep_close", detail=detail
+        ):
+            continue
         closed.append(
             {
                 "lease_no": lease["lease_no"],
@@ -137,6 +163,12 @@ def open_lease(conn: sqlite3.Connection, window_code: str) -> dict:
     ):
         raise ValueError(
             f"批窗已过结束时刻 {clock_svc.fmt_min(session['end_min'])}，不能开窗"
+        )
+    # 批窗日界：所在日已日切收口的批窗不得再开窗——
+    # 否则日切回执宣告「当日无跨日占用」后又会冒出新占用，口径撕裂。
+    if is_day_closed(conn, session["day"]):
+        raise ValueError(
+            f"批窗所在日 {session['day']} 已日切收口，不能再开窗"
         )
 
     ready = readiness(conn, session, clock=clock)
@@ -237,24 +269,14 @@ def close_lease(conn: sqlite3.Connection, lease_no: str, *, actor: str = "operat
         raise ValueError(f"租约不存在：{lease_no}")
     if lease["status"] != "open":
         raise ValueError("租约不在占用态")
-    conn.execute(
-        "UPDATE leases SET status='closed', closed_at=? WHERE lease_no=?",
-        (clock_svc.now_iso(), lease_no),
-    )
-    conn.execute(
-        "UPDATE windows SET status='done' WHERE code=?",
-        (lease["window_code"],),
-    )
-    _bump(conn, "open_leases", -1)
-    reconcile_open_watermark(conn)
-    clock_svc.audit(
+    close_lease_row(
         conn,
-        "manual_close",
+        lease,
         actor=actor,
-        window_code=lease["window_code"],
-        lease_no=lease_no,
+        action="manual_close",
         detail="人工关窗释放",
     )
+    reconcile_open_watermark(conn)
     return {
         "lease_no": lease_no,
         "status": "closed",

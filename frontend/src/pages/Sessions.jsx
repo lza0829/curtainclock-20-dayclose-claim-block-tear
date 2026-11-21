@@ -102,10 +102,18 @@ export default function Sessions() {
               </td>
               <td>
                 <button
-                  disabled={r.status !== "draft" || r.readiness?.past_end}
+                  disabled={
+                    r.status !== "draft" ||
+                    r.readiness?.past_end ||
+                    r.readiness?.day_closed
+                  }
                   onClick={() => openLease(r.code)}
                   title={
-                    r.readiness?.past_end ? "已过结束时刻，不能开窗" : undefined
+                    r.readiness?.past_end
+                      ? "已过结束时刻，不能开窗"
+                      : r.readiness?.day_closed
+                        ? `所在日 ${r.day} 已日切收口，不能开窗`
+                        : undefined
                   }
                 >
                   开窗占用

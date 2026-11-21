@@ -1,5 +1,4 @@
 from __future__ import annotations
-from app.services import day_close_view
 
 import sqlite3
 from datetime import datetime, timezone
@@ -79,7 +78,3 @@ def audit(
             detail,
         ),
     )
-
-
-def panel_day_close(conn, day: str):
-    return day_close_view.run_day_close(conn, day)
